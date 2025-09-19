@@ -2,49 +2,54 @@ import torch
 import torch.nn as nn
 
 class DWConvBlock(nn.Module):
-    def __init__(self, in_ch, out_ch):
+    def __init__(self, in_ch, out_ch, dropout_p=0.0):
         super().__init__()
+        Drop = (lambda p: nn.Identity()) if dropout_p <= 0 else (lambda p: nn.Dropout2d(p))
         self.block = nn.Sequential(
             nn.Conv2d(in_ch, in_ch, 3, padding=1, groups=in_ch, bias=False),
             nn.BatchNorm2d(in_ch),
             nn.ReLU(inplace=True),
+            Drop(dropout_p),
             nn.Conv2d(in_ch, out_ch, 1, bias=False),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
+            Drop(dropout_p),
 
             nn.Conv2d(out_ch, out_ch, 3, padding=1, groups=out_ch, bias=False),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
+            Drop(dropout_p),
             nn.Conv2d(out_ch, out_ch, 1, bias=False),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
+            Drop(dropout_p),
         )
 
     def forward(self, x):
         return self.block(x)
 
 class LiteUNet(nn.Module):
-    def __init__(self, in_ch=3, num_classes=19, base=64):
+    def __init__(self, in_ch=3, num_classes=19, base=64, dropout_p=0.0):
         super().__init__()
         C = [in_ch, base, base*2, base*4, base*8]
 
-        self.enc1 = DWConvBlock(C[0], C[1])
+        self.enc1 = DWConvBlock(C[0], C[1], dropout_p)
         self.pool1 = nn.MaxPool2d(2)
-        self.enc2 = DWConvBlock(C[1], C[2])
+        self.enc2 = DWConvBlock(C[1], C[2], dropout_p)
         self.pool2 = nn.MaxPool2d(2)
-        self.enc3 = DWConvBlock(C[2], C[3])
+        self.enc3 = DWConvBlock(C[2], C[3], dropout_p)
         self.pool3 = nn.MaxPool2d(2)
 
-        self.bottleneck = DWConvBlock(C[3], C[4])
+        self.bottleneck = DWConvBlock(C[3], C[4], dropout_p)
 
         self.up3 = nn.ConvTranspose2d(C[4], C[3], 2, stride=2)
-        self.dec3 = DWConvBlock(C[3] + C[3], C[3])
+        self.dec3 = DWConvBlock(C[3] + C[3], C[3], dropout_p)
 
         self.up2 = nn.ConvTranspose2d(C[3], C[2], 2, stride=2)
-        self.dec2 = DWConvBlock(C[2] + C[2], C[2])
+        self.dec2 = DWConvBlock(C[2] + C[2], C[2], dropout_p)
 
         self.up1 = nn.ConvTranspose2d(C[2], C[1], 2, stride=2)
-        self.dec1 = DWConvBlock(C[1] + C[1], C[1])
+        self.dec1 = DWConvBlock(C[1] + C[1], C[1], dropout_p)
 
         self.head = nn.Conv2d(C[1], num_classes, 1)
 
@@ -57,6 +62,7 @@ class LiteUNet(nn.Module):
         x  = self.pool3(e3)
 
         x  = self.bottleneck(x)
+
         x  = self.up3(x)
         x  = torch.cat([x, e3], 1)
         x  = self.dec3(x)

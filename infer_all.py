@@ -37,6 +37,10 @@ def main():
         x = TF.normalize(x, [0.5,0.5,0.5], [0.5,0.5,0.5])
         x = x.unsqueeze(0).to(args.device)
         logits = model(x)
+        x_flip = torch.flip(x, dims=[3])
+        logits_flip = model(x_flip)
+        logits_flip = torch.flip(logits_flip, dims=[3])
+        logits = (logits + logits_flip) / 2.0
         pred = logits.argmax(1).squeeze(0).cpu().numpy().astype(np.uint8)
 
         name = os.path.splitext(os.path.basename(p))[0] + ".png"
