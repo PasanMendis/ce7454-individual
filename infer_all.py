@@ -25,6 +25,7 @@ def main():
     ap.add_argument("--base", type=int, default=64)
     ap.add_argument("--size", type=int, default=512)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument("--tta", action="store_true", help="optional horizontal flip TTA")
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -36,13 +37,15 @@ def main():
         x = TF.to_tensor(img)
         x = TF.normalize(x, [0.5,0.5,0.5], [0.5,0.5,0.5])
         x = x.unsqueeze(0).to(args.device)
-        logits = model(x)
-        x_flip = torch.flip(x, dims=[3])
-        logits_flip = model(x_flip)
-        logits_flip = torch.flip(logits_flip, dims=[3])
-        logits = (logits + logits_flip) / 2.0
-        pred = logits.argmax(1).squeeze(0).cpu().numpy().astype(np.uint8)
 
+        logits = model(x)
+        if args.tta:
+            x_flip = torch.flip(x, dims=[3])
+            logits_flip = model(x_flip)
+            logits_flip = torch.flip(logits_flip, dims=[3])
+            logits = (logits + logits_flip) / 2.0
+
+        pred = logits.argmax(1).squeeze(0).cpu().numpy().astype(np.uint8)
         name = os.path.splitext(os.path.basename(p))[0] + ".png"
         Image.fromarray(pred, mode="L").save(os.path.join(args.out_dir, name))
 
