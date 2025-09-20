@@ -1,14 +1,13 @@
-import os, glob
+import os, glob, random
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 import torch
 from torch.utils.data import Dataset
 import torchvision.transforms.functional as TF
+from torchvision.transforms import ColorJitter
 
-def index_dir(d, exts):
+def _index(d, exts):
     m = {}
-    if not os.path.isdir(d):
-        raise FileNotFoundError(f"Directory not found: {d}")
     for ext in exts:
         for p in glob.glob(os.path.join(d, f"*{ext}")):
             m[os.path.splitext(os.path.basename(p))[0]] = p
@@ -16,38 +15,56 @@ def index_dir(d, exts):
 
 class FaceParseDataset(Dataset):
     """
-    Conservative loader: resize->(optional H-flip for train)->tensor->normalize.
-    Masks must be single-channel PNG label IDs.
+    Face parsing dataset with safe augmentations (no flips).
+    Augs: near-identity resized crop, color jitter, gaussian blur.
     """
     def __init__(self, img_dir, mask_dir, split="train", img_size=512):
-        self.imgs  = index_dir(img_dir,  [".jpg",".jpeg",".png",".JPG",".JPEG",".PNG"])
-        self.masks = index_dir(mask_dir, [".png",".PNG"])
-        self.bases = sorted(list(set(self.imgs.keys()) & set(self.masks.keys())))
-        if len(self.bases) == 0:
-            raise FileNotFoundError(f"No matching image/mask basenames between {img_dir} and {mask_dir}")
-        self.split = split
-        self.img_size = img_size
+        imgs  = _index(img_dir,  [".jpg",".jpeg",".png",".JPG",".JPEG",".PNG"])
+        masks = _index(mask_dir, [".png",".PNG"])
+        self.basenames = sorted(set(imgs) & set(masks))
+        if not self.basenames:
+            raise FileNotFoundError("No matching basenames between images/ and masks/")
+        self.imgs, self.masks = imgs, masks
+        self.split, self.img_size = split, img_size
+        self.jitter = ColorJitter(0.15, 0.15, 0.15, 0.05)  # mild
 
-    def __len__(self):
-        return len(self.bases)
+    def _random_resized_crop_params(self, w, h):
+        scale = random.uniform(0.95, 1.0)
+        ratio = random.uniform(0.98, 1.02)
+        target_area = scale * w * h
+        new_w = int(round((target_area * ratio) ** 0.5))
+        new_h = int(round((target_area / ratio) ** 0.5))
+        new_w = min(new_w, w); new_h = min(new_h, h)
+        i = random.randint(0, h - new_h) if h > new_h else 0
+        j = random.randint(0, w - new_w) if w > new_w else 0
+        return i, j, new_h, new_w
+
+    def __len__(self): return len(self.basenames)
 
     def __getitem__(self, i):
-        b = self.bases[i]
+        b = self.basenames[i]
         img  = Image.open(self.imgs[b]).convert("RGB")
-        mask = Image.open(self.masks[b])  # label IDs
+        mask = Image.open(self.masks[b])
 
-        # resize first (512x512)
+        # resize to canonical size first
         img  = img.resize((self.img_size, self.img_size), Image.BILINEAR)
         mask = mask.resize((self.img_size, self.img_size), Image.NEAREST)
 
-        # only safe aug: horizontal flip
         if self.split == "train":
-            if torch.rand(1).item() < 0.5:
-                img = TF.hflip(img); mask = TF.hflip(mask)
+            # near-identity resized crop
+            if random.random() < 0.3:
+                i0, j0, h0, w0 = self._random_resized_crop_params(self.img_size, self.img_size)
+                img  = TF.resized_crop(img, i0, j0, h0, w0, (self.img_size, self.img_size), TF.InterpolationMode.BILINEAR)
+                mask = TF.resized_crop(mask,i0, j0, h0, w0, (self.img_size, self.img_size), TF.InterpolationMode.NEAREST)
 
-        # to tensor + normalize
-        img  = TF.to_tensor(img)
-        img  = TF.normalize(img, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
-        mask = torch.from_numpy(np.array(mask, dtype=np.int64))  # (H,W)
+            # color jitter
+            img = self.jitter(img)
 
-        return img, mask
+            # occasional gaussian blur
+            if random.random() < 0.2:
+                img = img.filter(ImageFilter.GaussianBlur(radius=0.5))
+
+        # convert
+        x = TF.normalize(TF.to_tensor(img), [0.5]*3, [0.5]*3)
+        y = torch.from_numpy(np.array(mask, dtype=np.int64))
+        return x, y

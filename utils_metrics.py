@@ -1,27 +1,24 @@
 import numpy as np
-import torch
-
-@torch.no_grad()
-def confusion_hist(a, b, n):
-    k = (a >= 0) & (a < n)
-    return np.bincount(n * a[k].astype(int) + b[k], minlength=n**2).reshape(n, n)
-
-@torch.no_grad()
-def mean_iou(preds, gts, n_classes):
-    hist = np.zeros((n_classes, n_classes))
-    for p, g in zip(preds, gts):
-        hist += confusion_hist(g.flatten(), p.flatten(), n_classes)
-    iu = np.diag(hist) / (hist.sum(1) + hist.sum(0) - np.diag(hist) + 1e-7)
-    return float(np.nanmean(iu))
 
 def compute_multiclass_fscore(mask_gt, mask_pred, beta=1):
-    f_scores = []
-    for class_id in np.unique(mask_gt):
-        tp = np.sum((mask_gt == class_id) & (mask_pred == class_id))
-        fp = np.sum((mask_gt != class_id) & (mask_pred == class_id))
-        fn = np.sum((mask_gt == class_id) & (mask_pred != class_id))
-        precision = tp / (tp + fp + 1e-7)
-        recall    = tp / (tp + fn + 1e-7)
-        f = (1 + beta**2) * (precision * recall) / ((beta**2 * precision) + recall + 1e-7)
-        f_scores.append(f)
-    return float(np.mean(f_scores))
+    f = []
+    for cid in np.unique(mask_gt):
+        tp = ((mask_gt==cid)&(mask_pred==cid)).sum()
+        fp = ((mask_gt!=cid)&(mask_pred==cid)).sum()
+        fn = ((mask_gt==cid)&(mask_pred!=cid)).sum()
+        pre = tp / (tp + fp + 1e-7)
+        rec = tp / (tp + fn + 1e-7)
+        f.append((1+beta**2)*pre*rec/((beta**2*pre)+rec + 1e-7))
+    return float(np.mean(f)) if f else 0.0
+
+def mean_iou(preds, gts, num_classes):
+    inter = np.zeros(num_classes, dtype=np.float64)
+    union = np.zeros(num_classes, dtype=np.float64)
+    for p,g in zip(preds, gts):
+        for c in np.unique(g):
+            i = ((p==c)&(g==c)).sum()
+            u = ((p==c)|(g==c)).sum()
+            inter[c] += i; union[c] += u
+    iou = inter / (union + 1e-7)
+    valid = union > 0
+    return float(iou[valid].mean()) if valid.any() else 0.0

@@ -1,5 +1,5 @@
-torch>=2.1
-torchvision>=0.16
+torch>=2.2
+torchvision>=0.17
 numpy
-Pillow
+Pillow>=9.0
 tqdm
